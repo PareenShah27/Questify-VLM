@@ -153,32 +153,6 @@ VLM_CONFIG = {
 - **Memory Usage:** Compressed multi-vector representations
 - **Accuracy Improvement:** 15-30% better retrieval effectiveness on visual documents
 
-## API Usage
-
-### Text Search
-```python
-from questify.files.main import QuestifyEngine
-
-engine = QuestifyEngine(mode='text')
-results = engine.search('machine learning algorithms')
-```
-
-### VLM Search
-```python
-from questify.files.main import QuestifyEngine
-
-engine = QuestifyEngine(mode='vlm')
-results = engine.search('documents with revenue charts')
-```
-
-### Hybrid Search
-```python
-from questify.files.main import QuestifyEngine
-
-engine = QuestifyEngine(mode='hybrid')
-results = engine.search('financial reports with growth metrics')
-```
-
 ## Dependencies
 
 ### Core Dependencies (Enhanced)
@@ -221,13 +195,8 @@ sentence-transformers>=2.2.2
 - **ColBERT:** Late interaction retrieval methodology
 - **PaliGemma:** Google's vision-language model architecture
 
-## License
 
-[Specify your choice of license here]
-
----
-
-## Changelog
+## Versions
 
 ### v2.0.0 (VLM Integration)
 - Added Vision Language Model support
