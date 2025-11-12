@@ -1,1 +1,0 @@
-Web development involves HTML, CSS, JavaScript and frameworks.
