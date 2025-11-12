@@ -2,14 +2,27 @@
 Core search engine components.
 """
 
-from .indexer import TFIDFIndexer
-from .similarity import CosineSimilarityCalculator
-from .query_processor import QueryProcessor
-from .ranker import ResultRanker
+from .indexer import TFIDFIndexer, VLMDocumentIndexer, HybridIndexManager
+from .similarity import CosineSimilarityCalculator, VLMSimilarityCalculator, HybridSimilarityCalculator
+from .query_processor import QueryProcessor, VLMQueryProcessor, MultimodalQueryRouter
+from .ranker import ResultRanker, VLMResultRanker, HybridResultRanker
+from .late_interaction import LateInteractionScorer, DocumentTokenizer
+from .vlm_embedding import VLMEmbedder
 
 __all__ = [
     'TFIDFIndexer',
+    'VLMDocumentIndexer',
+    'HybridIndexManager',
     'CosineSimilarityCalculator', 
+    'VLMSimilarityCalculator',
+    'HybridSimilarityCalculator',
     'QueryProcessor',
-    'ResultRanker'
+    'VLMQueryProcessor',
+    'MultimodalQueryRouter',
+    'ResultRanker',
+    'VLMResultRanker',
+    'HybridResultRanker',
+    'LateInteractionScorer',
+    'DocumentTokenizer',
+    'VLMEmbedder'
 ]

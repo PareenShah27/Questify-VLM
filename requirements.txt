@@ -1,14 +1,102 @@
-# Questify Search Engine Requirements
+# Questify VLM - Multimodal Search Engine Requirements
+# Install with: pip install -r requirements.txt
 
-# Core dependencies
+# ==================== CORE DEPENDENCIES ====================
+
+# Web UI and Frontend
 streamlit>=1.28.0
 
-# Optional dependencies for enhanced functionality
-# pandas>=1.5.0        # For data manipulation (if needed)
-# numpy>=1.24.0        # For numerical operations (if needed)
-# nltk>=3.8.0          # For advanced text processing (if needed)
+# Scientific Computing & Data Processing
+numpy>=1.24.0
+scipy>=1.10.0
+scikit-learn>=1.3.0
+pandas>=1.5.0
 
-# Development dependencies (uncomment if needed)
-# pytest>=7.0.0        # For testing
-# black>=22.0.0        # For code formatting
-# flake8>=5.0.0        # For linting
+# Computer Vision & Image Processing
+Pillow>=10.0.0
+pdf2image>=1.16.0
+
+# NLP & Text Processing
+nltk>=3.8.0
+
+# Vision-Language Models (for ColPali/ColQwen2)
+transformers>=4.30.0
+torch>=2.0.0
+torchvision>=0.15.0
+
+# ==================== OPTIONAL DEPENDENCIES ====================
+
+# Document Processing
+python-docx>=0.8.11          # For DOCX files
+pypdf>=3.14.0                # For PDF reading
+markdown>=3.4.1              # For Markdown processing
+
+# Database & Caching
+redis>=4.5.0                 # For caching (optional)
+lru-dict>=1.2.0              # For in-memory caching
+
+# ==================== DEVELOPMENT DEPENDENCIES ====================
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+unittest-xml-reporting>=3.2.0
+
+# Code Quality
+black>=23.0.0
+flake8>=6.0.0
+pylint>=2.17.0
+isort>=5.12.0
+
+# Documentation
+sphinx>=6.2.0
+sphinx-rtd-theme>=1.3.0
+
+# Type Checking
+mypy>=1.4.0
+
+# ==================== OPTIONAL ML DEPENDENCIES ====================
+
+# Advanced Search Features
+annoy>=1.17.0                # For ANN search
+faiss-cpu>=1.7.4             # For similarity search (CPU version)
+# faiss-gpu>=1.7.4           # For GPU acceleration (GPU version)
+
+# ML Monitoring
+wandb>=0.15.0                # For experiment tracking
+tensorboard>=2.13.0          # For training visualization
+
+# ==================== UTILITY DEPENDENCIES ====================
+
+# Configuration Management
+python-dotenv>=1.0.0
+pyyaml>=6.0
+
+# Logging & Monitoring
+loguru>=0.7.0
+colorama>=0.4.6
+
+# File & Path Handling
+pathlib2>=2.3.0
+
+# Performance Profiling
+memory-profiler>=0.60.0
+
+# ==================== NOTES ====================
+
+# For GPU Support (CUDA):
+# 1. Install CUDA toolkit from NVIDIA
+# 2. Replace torch with: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# 3. Optionally use faiss-gpu instead of faiss-cpu
+
+# For faster transformers:
+# pip install accelerate>=0.20.0
+
+# For quantization support:
+# pip install bitsandbytes>=0.40.0
+
+# Installation Instructions:
+# 1. Create virtual environment: python -m venv venv
+# 2. Activate: source venv/bin/activate (on Windows: venv\Scripts\activate)
+# 3. Install requirements: pip install -r requirements.txt
+# 4. Run app: streamlit run files/streamlit_app.py

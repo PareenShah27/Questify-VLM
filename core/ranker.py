@@ -1,127 +1,267 @@
 """
-Result ranking module for Questify search engine.
-Handles sorting and formatting of search results.
+core/ranker.py - Result Ranking for Questify VLM
+
+Supports:
+- Text-based result ranking
+- VLM-based result ranking
+- Hybrid result ranking
 """
 
-from typing import List, Dict, Tuple, Optional
+import logging
+from typing import Dict, List, Optional, Any, Tuple
+import numpy as np
 
 
 class ResultRanker:
-    """Ranks and formats search results based on similarity scores."""
+    """Rank text search results."""
     
-    def __init__(self, max_results: int = 10, min_similarity_score: float = 0.01):
+    def __init__(self, config):
+        """Initialize result ranker."""
+        self.config = config
+        self.logger = logging.getLogger(self.__class__.__name__)
+    
+    def rank_results(self,
+                    results: List[Dict[str, Any]],
+                    scores: np.ndarray,
+                    top_k: int = 10) -> List[Dict[str, Any]]:
         """
-        Initialize result ranker.
+        Rank and filter results by score.
         
         Args:
-            max_results: Maximum number of results to return
-            min_similarity_score: Minimum similarity score threshold
-        """
-        self.max_results = max_results
-        self.min_similarity_score = min_similarity_score
-    
-    def rank_results(self, similarities: List[Tuple[str, float]], 
-                     document_store=None) -> Dict:
-        """
-        Rank and format search results.
-        
-        Args:
-            similarities: List of (doc_id, similarity_score) tuples
-            document_store: Optional document store for retrieving document content
+            results: List of result dictionaries
+            scores: Array of relevance scores
+            top_k: Number of top results to return
             
         Returns:
-            Dictionary with formatted search results
+            Top-k ranked results with scores
         """
-        # Filter by minimum similarity score
-        filtered_results = [
-            (doc_id, score) for doc_id, score in similarities 
-            if score >= self.min_similarity_score
-        ]
-        
-        # Sort by similarity score (descending)
-        sorted_results = sorted(filtered_results, key=lambda x: x[1], reverse=True)
-        
-        # Limit number of results
-        top_results = sorted_results[:self.max_results]
-        
-        # Format results
-        formatted_results = []
-        for doc_id, similarity_score in top_results:
-            result = {
-                'doc_id': doc_id,
-                'similarity_score': round(similarity_score, 4),
-                'rank': len(formatted_results) + 1
-            }
+        try:
+            min_score = self.config.get('search.min_similarity_score', 0.01)
             
-            # Add document content if document store is available
-            if document_store:
-                content = document_store.get_document_content(doc_id)
-                if content:
-                    result['content'] = content
-                    result['preview'] = self._create_preview(content)
+            # Combine results with scores
+            ranked = []
+            for i, (result, score) in enumerate(zip(results, scores)):
+                if score >= min_score:
+                    result_copy = result.copy()
+                    result_copy['score'] = float(score)
+                    result_copy['rank'] = len(ranked) + 1
+                    ranked.append(result_copy)
             
-            formatted_results.append(result)
-        
-        return {
-            'results': formatted_results,
-            'total_results': len(formatted_results),
-            'total_candidates': len(similarities),
-            'search_stats': {
-                'filtered_by_threshold': len(similarities) - len(filtered_results),
-                'returned_results': len(formatted_results)
-            }
-        }
+            # Sort by score descending
+            ranked.sort(key=lambda x: x['score'], reverse=True)
+            
+            # Return top-k
+            return ranked[:top_k]
+        except Exception as e:
+            self.logger.error(f"Error ranking results: {e}")
+            return []
     
-    def _create_preview(self, content: str, max_length: int = 200) -> str:
+    def rerank_results(self,
+                      results: List[Dict[str, Any]],
+                      query: str) -> List[Dict[str, Any]]:
         """
-        Create a preview snippet from document content.
+        Apply reranking logic (optional enhancement).
         
         Args:
-            content: Full document content
-            max_length: Maximum length of preview
+            results: List of results to rerank
+            query: Original query
             
         Returns:
-            Preview snippet
+            Reranked results
         """
-        if not content:
-            return ""
-        
-        if len(content) <= max_length:
-            return content
-        
-        # Try to cut at word boundary
-        preview = content[:max_length]
-        last_space = preview.rfind(' ')
-        
-        if last_space > max_length * 0.8:  # If we find a space reasonably close to the end
-            preview = preview[:last_space]
-        
-        return preview + "..."
+        try:
+            # Placeholder for reranking logic
+            # Could use cross-encoder models, BM25, etc.
+            return results
+        except Exception as e:
+            self.logger.error(f"Error reranking: {e}")
+            return results
+
+
+class VLMResultRanker:
+    """Rank VLM search results."""
     
-    def get_ranking_stats(self, similarities: List[Tuple[str, float]]) -> Dict:
+    def __init__(self, config):
+        """Initialize VLM result ranker."""
+        self.config = config
+        self.logger = logging.getLogger(self.__class__.__name__)
+    
+    def rank_results(self,
+                    results: List[Dict[str, Any]],
+                    scores: np.ndarray,
+                    top_k: int = 10) -> List[Dict[str, Any]]:
         """
-        Get statistics about the ranking process.
+        Rank VLM results.
         
         Args:
-            similarities: List of (doc_id, similarity_score) tuples
+            results: List of result dictionaries
+            scores: Array of VLM similarity scores
+            top_k: Number of results to return
             
         Returns:
-            Dictionary with ranking statistics
+            Top-k ranked VLM results
         """
-        if not similarities:
-            return {
-                'total_candidates': 0,
-                'avg_similarity': 0.0,
-                'max_similarity': 0.0,
-                'min_similarity': 0.0
-            }
+        try:
+            min_score = self.config.get('search.min_similarity_score', 0.01)
+            
+            # Normalize scores to [0, 1]
+            if len(scores) > 0:
+                scores = np.clip(scores, 0, 1)
+            
+            # Combine and filter
+            ranked = []
+            for i, (result, score) in enumerate(zip(results, scores)):
+                if score >= min_score:
+                    result_copy = result.copy()
+                    result_copy['vlm_score'] = float(score)
+                    result_copy['rank'] = len(ranked) + 1
+                    ranked.append(result_copy)
+            
+            # Sort by score descending
+            ranked.sort(key=lambda x: x['vlm_score'], reverse=True)
+            
+            # Apply diversity penalty if configured
+            diversity_penalty = self.config.get('hybrid.diversity_penalty', 0.0)
+            if diversity_penalty > 0:
+                ranked = self.apply_diversity_penalty(ranked, diversity_penalty)
+            
+            return ranked[:top_k]
+        except Exception as e:
+            self.logger.error(f"Error ranking VLM results: {e}")
+            return []
+    
+    def apply_diversity_penalty(self,
+                               results: List[Dict[str, Any]],
+                               penalty: float = 0.1) -> List[Dict[str, Any]]:
+        """
+        Penalize similar results to increase diversity.
         
-        scores = [score for _, score in similarities]
+        Args:
+            results: List of results
+            penalty: Penalty factor [0, 1]
+            
+        Returns:
+            Results with adjusted scores
+        """
+        try:
+            if len(results) <= 1:
+                return results
+            
+            penalized = [results[0].copy()]
+            
+            # Simple diversity: penalize consecutive similar results
+            for i in range(1, len(results)):
+                result = results[i].copy()
+                
+                # Penalize based on similarity to already selected
+                adjusted_score = result.get('vlm_score', 0)
+                adjusted_score *= (1.0 - penalty)
+                
+                result['vlm_score'] = adjusted_score
+                penalized.append(result)
+            
+            # Re-sort with penalty applied
+            penalized.sort(key=lambda x: x['vlm_score'], reverse=True)
+            
+            return penalized
+        except Exception as e:
+            self.logger.error(f"Error applying diversity penalty: {e}")
+            return results
+
+
+class HybridResultRanker:
+    """Rank hybrid search results."""
+    
+    def __init__(self, config):
+        """Initialize hybrid result ranker."""
+        self.config = config
+        self.logger = logging.getLogger(self.__class__.__name__)
+    
+    def rank_results(self,
+                    text_results: List[Dict[str, Any]],
+                    vlm_results: List[Dict[str, Any]],
+                    top_k: int = 10) -> List[Dict[str, Any]]:
+        """
+        Merge and rank hybrid search results.
         
-        return {
-            'total_candidates': len(similarities),
-            'avg_similarity': sum(scores) / len(scores),
-            'max_similarity': max(scores),
-            'min_similarity': min(scores),
-            'above_threshold': len([s for s in scores if s >= self.min_similarity_score])
-        }
+        Args:
+            text_results: Results from text search
+            vlm_results: Results from VLM search
+            top_k: Number of results to return
+            
+        Returns:
+            Top-k merged and ranked results
+        """
+        try:
+            # Merge results
+            merged = self.merge_results(text_results, vlm_results)
+            
+            # Calculate hybrid scores
+            for result in merged:
+                text_score = result.get('score', 0.0)
+                vlm_score = result.get('vlm_score', 0.0)
+                
+                text_weight = self.config.get('hybrid.text_weight', 0.5)
+                vlm_weight = self.config.get('hybrid.vlm_weight', 0.5)
+                
+                # Combine scores
+                hybrid_score = text_weight * text_score + vlm_weight * vlm_score
+                result['hybrid_score'] = hybrid_score
+            
+            # Sort by hybrid score
+            merged.sort(key=lambda x: x['hybrid_score'], reverse=True)
+            
+            # Update ranks
+            for i, result in enumerate(merged):
+                result['rank'] = i + 1
+            
+            return merged[:top_k]
+        except Exception as e:
+            self.logger.error(f"Error ranking hybrid results: {e}")
+            return []
+    
+    def merge_results(self,
+                     text_results: List[Dict[str, Any]],
+                     vlm_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Merge results from text and VLM searches.
+        
+        Args:
+            text_results: Text search results
+            vlm_results: VLM search results
+            
+        Returns:
+            Merged results with duplicates handled
+        """
+        try:
+            # Create ID-based lookup
+            merged_dict = {}
+            
+            # Add text results
+            for result in text_results:
+                doc_id = result.get('doc_id', result.get('id'))
+                if doc_id:
+                    merged_dict[doc_id] = result.copy()
+            
+            # Merge VLM results
+            for result in vlm_results:
+                doc_id = result.get('doc_id', result.get('id'))
+                if doc_id:
+                    if doc_id in merged_dict:
+                        # Merge with existing result
+                        merged_dict[doc_id]['vlm_score'] = result.get('vlm_score', 0.0)
+                    else:
+                        # Add new result
+                        merged_dict[doc_id] = result.copy()
+            
+            # Fill missing scores with 0
+            for result in merged_dict.values():
+                if 'score' not in result:
+                    result['score'] = 0.0
+                if 'vlm_score' not in result:
+                    result['vlm_score'] = 0.0
+            
+            return list(merged_dict.values())
+        except Exception as e:
+            self.logger.error(f"Error merging results: {e}")
+            return text_results + vlm_results

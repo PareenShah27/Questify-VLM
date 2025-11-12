@@ -1,94 +1,206 @@
 """
-Query processing module for Questify search engine.
-Handles user input parsing, validation, and query preprocessing.
+core/query_processor.py - Query Processing for Questify VLM
+
+Supports:
+- Text query processing for TF-IDF search
+- VLM query processing for visual search
+- Multimodal query routing
 """
 
+import logging
+from typing import Dict, List, Optional, Tuple, Any
+import numpy as np
 import re
-from typing import List, Optional
-from utils.text_preprocessor import TextPreprocessor
 
 
 class QueryProcessor:
-    """Processes and validates user search queries."""
+    """Process text queries for TF-IDF search."""
     
-    def __init__(self, preprocessor: TextPreprocessor):
+    def __init__(self, config, text_preprocessor):
+        """Initialize query processor."""
+        self.config = config
+        self.text_preprocessor = text_preprocessor
+        self.logger = logging.getLogger(self.__class__.__name__)
+    
+    def process(self, query: str) -> str:
         """
-        Initialize query processor.
+        Process and normalize a query.
         
         Args:
-            preprocessor: Text preprocessor instance
-        """
-        self.preprocessor = preprocessor
-    
-    def process_query(self, raw_query: str) -> List[str]:
-        """
-        Process raw query string into clean tokens.
-        
-        Args:
-            raw_query: Raw user input query
+            query: Raw query text
             
         Returns:
-            List of processed query terms
+            Processed query string
         """
-        if not raw_query or not raw_query.strip():
-            return []
-        
-        # Basic input validation and cleaning
-        cleaned_query = self._clean_query(raw_query)
-        
-        # Preprocess using text preprocessor
-        query_terms = self.preprocessor.preprocess(cleaned_query)
-        
-        return query_terms
+        try:
+            # Basic preprocessing
+            processed = query.strip()
+            
+            # Lowercase if configured
+            if self.config.get('text_preprocessing.lowercase', True):
+                processed = processed.lower()
+            
+            # Remove extra whitespace
+            processed = re.sub(r'\s+', ' ', processed)
+            
+            # Use text preprocessor if available
+            if self.text_preprocessor:
+                processed = self.text_preprocessor.preprocess(processed)
+            
+            return processed
+        except Exception as e:
+            self.logger.error(f"Error processing query: {e}")
+            return query.lower().strip()
     
-    def _clean_query(self, query: str) -> str:
+    def process_batch(self, queries: List[str]) -> List[str]:
         """
-        Clean raw query by removing excessive whitespace and invalid characters.
+        Process multiple queries.
         
         Args:
-            query: Raw query string
+            queries: List of query strings
             
         Returns:
-            Cleaned query string
+            List of processed queries
         """
-        # Remove any potentially harmful characters (basic sanitization)
-        # Keep alphanumeric, spaces, and basic punctuation
-        cleaned = re.sub(r'[^a-zA-Z0-9\\s\\-_.,!?]', ' ', query)
-        
-        return cleaned
+        return [self.process(q) for q in queries]
+
+
+class VLMQueryProcessor:
+    """Process queries for VLM search."""
     
-    def validate_query(self, query_terms: List[str]) -> bool:
+    def __init__(self, config, vlm_embedder):
+        """Initialize VLM query processor."""
+        self.config = config
+        self.vlm_embedder = vlm_embedder
+        self.logger = logging.getLogger(self.__class__.__name__)
+    
+    def encode_query(self, query: str) -> Optional[np.ndarray]:
         """
-        Validate processed query terms.
+        Encode query text to VLM embedding.
         
         Args:
-            query_terms: List of processed query terms
+            query: Query text
             
         Returns:
-            True if query is valid, False otherwise
+            Query embedding vector or None
         """
-        # Check if we have at least one valid term
-        if not query_terms:
-            return False
-        
-        # Check if terms are not empty after processing
-        valid_terms = [term for term in query_terms if term.strip()]
-        
-        return len(valid_terms) > 0
+        try:
+            embedding = self.vlm_embedder.encode_text(query)
+            return embedding
+        except Exception as e:
+            self.logger.error(f"Error encoding query: {e}")
+            return None
     
-    def get_query_info(self, query_terms: List[str]) -> dict:
+    def encode_batch(self, queries: List[str]) -> Optional[np.ndarray]:
         """
-        Get information about the processed query.
+        Encode multiple queries.
         
         Args:
-            query_terms: List of processed query terms
+            queries: List of query texts
             
         Returns:
-            Dictionary with query statistics
+            Embedding matrix (NxD) or None
         """
+        try:
+            embeddings = []
+            for query in queries:
+                emb = self.encode_query(query)
+                if emb is not None:
+                    embeddings.append(emb)
+            
+            if embeddings:
+                return np.array(embeddings)
+            return None
+        except Exception as e:
+            self.logger.error(f"Error encoding batch: {e}")
+            return None
+    
+    def encode_image(self, image_path: str) -> Optional[np.ndarray]:
+        """Encode image to VLM embedding."""
+        try:
+            return self.vlm_embedder.encode_image(image_path)
+        except Exception as e:
+            self.logger.error(f"Error encoding image: {e}")
+            return None
+
+
+class MultimodalQueryRouter:
+    """Route query to appropriate search mode."""
+    
+    def __init__(self, config):
+        """Initialize query router."""
+        self.config = config
+        self.logger = logging.getLogger(self.__class__.__name__)
+    
+    def determine_search_mode(self, query: str) -> str:
+        """
+        Determine appropriate search mode for query.
+        
+        Args:
+            query: Query text
+            
+        Returns:
+            Search mode: 'text', 'vlm', or 'hybrid'
+        """
+        mode = self.config.get('search.search_mode', 'auto')
+        
+        if mode != 'auto':
+            return mode
+        
+        # Auto-detect based on query characteristics
+        if self._is_visual_query(query):
+            return 'vlm'
+        else:
+            return 'text'
+    
+    def should_use_vlm(self, query: str) -> bool:
+        """Check if VLM search is appropriate."""
+        mode = self.determine_search_mode(query)
+        return mode in ['vlm', 'hybrid']
+    
+    def route_query(self, query: str) -> Dict[str, Any]:
+        """
+        Route query and prepare for processing.
+        
+        Args:
+            query: Query text
+            
+        Returns:
+            Routing information dict
+        """
+        mode = self.determine_search_mode(query)
+        
         return {
-            'term_count': len(query_terms),
-            'unique_terms': len(set(query_terms)),
-            'terms': query_terms,
-            'is_valid': self.validate_query(query_terms)
+            'query': query,
+            'search_mode': mode,
+            'use_text': mode in ['text', 'hybrid'],
+            'use_vlm': mode in ['vlm', 'hybrid'],
+            'confidence': self._get_mode_confidence(query),
         }
+    
+    def _is_visual_query(self, query: str) -> bool:
+        """
+        Heuristic to detect visual queries.
+        
+        Visual indicators:
+        - Contains image-related keywords
+        - Contains visual descriptors
+        """
+        visual_keywords = [
+            'image', 'picture', 'photo', 'visual', 'layout',
+            'diagram', 'chart', 'graph', 'screenshot', 'design',
+            'color', 'shape', 'look', 'appearance', 'show me'
+        ]
+        
+        query_lower = query.lower()
+        for keyword in visual_keywords:
+            if keyword in query_lower:
+                return True
+        
+        return False
+    
+    def _get_mode_confidence(self, query: str) -> float:
+        """Get confidence score for selected mode."""
+        if self._is_visual_query(query):
+            return 0.8
+        return 0.7

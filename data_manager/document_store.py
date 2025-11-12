@@ -1,121 +1,92 @@
 """
-Document storage module for Questify search engine.
-Manages document storage, retrieval, and file operations.
+data_manager/document_store.py - Text Document Storage
+
+Manages storage and retrieval of text documents.
+Integrates with TFIDFIndexer from core/indexer.py
 """
 
-import os
-import json
-from typing import Dict, List, Optional, Union
+import logging
+import pickle
 from pathlib import Path
+from typing import Dict, List, Optional, Any
+import json
+from datetime import datetime
 
 
 class DocumentStore:
-    """Manages document storage and retrieval operations."""
+    """Store and manage text documents."""
     
-    def __init__(self, storage_path: str = "documents"):
-        """
-        Initialize document store.
+    def __init__(self, config):
+        """Initialize document store."""
+        self.config = config
+        self.logger = logging.getLogger(self.__class__.__name__)
         
-        Args:
-            storage_path: Path to document storage directory
-        """
-        self.storage_path = Path(storage_path)
-        self.storage_path.mkdir(exist_ok=True)
+        self.documents = {}  # doc_id -> document_data
+        self.metadata = {}   # doc_id -> metadata
+        self.doc_ids = []
         
-        self.documents = {}  # doc_id -> document_content
-        self.metadata = {}   # doc_id -> metadata (filename, size, etc.)
-        self.index_file = self.storage_path / "index.json"
+        # Setup storage paths
+        self.storage_path = Path(config.get('storage.documents_path', 'documents'))
+        self.storage_path.mkdir(parents=True, exist_ok=True)
         
-        # Load existing documents on initialization
-        self._load_index()
+        # Load existing documents if persistence enabled
+        if config.get('storage.enable_persistence', True):
+            self._load_documents()
+        
+        self.logger.info(f"DocumentStore initialized. Path: {self.storage_path}")
     
-    def add_document(self, doc_id: str, content: str, 
-                     filename: Optional[str] = None, 
-                     metadata: Optional[Dict] = None) -> bool:
+    def add_document(self, doc_id: str, content: str, metadata: Optional[Dict] = None) -> bool:
         """
         Add a document to the store.
         
         Args:
-            doc_id: Unique document identifier
-            content: Document content
-            filename: Original filename (optional)
-            metadata: Additional metadata (optional)
+            doc_id: Unique document ID
+            content: Document text content
+            metadata: Optional metadata dictionary
             
         Returns:
-            True if document was added successfully
+            True if successful
         """
         try:
-            # Store document content
-            self.documents[doc_id] = content
+            if not doc_id or not content:
+                self.logger.warning("Document ID and content cannot be empty")
+                return False
+            
+            self.documents[doc_id] = {
+                'content': content,
+                'added_at': datetime.now().isoformat(),
+            }
             
             # Store metadata
-            doc_metadata = {
-                'filename': filename or f"{doc_id}.txt",
-                'size': len(content),
-                'added_timestamp': self._get_timestamp(),
-                **(metadata or {})
-            }
-            self.metadata[doc_id] = doc_metadata
+            meta = metadata or {}
+            meta['size'] = len(content)
+            meta['word_count'] = len(content.split())
+            self.metadata[doc_id] = meta
             
-            # Save to file
-            doc_file = self.storage_path / f"{doc_id}.txt"
-            with open(doc_file, 'w', encoding='utf-8') as f:
-                f.write(content)
+            self.doc_ids = list(self.documents.keys())
             
-            # Update index
-            self._save_index()
-            
+            self.logger.info(f"Document added: {doc_id}")
             return True
-            
         except Exception as e:
-            print(f"Error adding document {doc_id}: {e}")
+            self.logger.error(f"Error adding document: {e}")
             return False
     
-    def add_document_from_file(self, file_path: Union[str, Path], 
-                             doc_id: Optional[str] = None) -> Optional[str]:
+    def add_documents(self, documents: Dict[str, str]) -> Dict[str, bool]:
         """
-        Add a document from a file.
+        Add multiple documents.
         
         Args:
-            file_path: Path to the file
-            doc_id: Optional document ID (will use filename if not provided)
+            documents: Dict mapping doc_id -> content
             
         Returns:
-            Document ID if successful, None otherwise
+            Dict mapping doc_id -> success boolean
         """
-        try:
-            file_path = Path(file_path)
-            
-            if not file_path.exists():
-                print(f"File not found: {file_path}")
-                return None
-            
-            # Generate doc_id if not provided
-            if not doc_id:
-                doc_id = file_path.stem
-            
-            # Read file content
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # Add document
-            success = self.add_document(
-                doc_id=doc_id,
-                content=content,
-                filename=file_path.name,
-                metadata={
-                    'original_path': str(file_path),
-                    'file_size': file_path.stat().st_size
-                }
-            )
-            
-            return doc_id if success else None
-            
-        except Exception as e:
-            print(f"Error adding document from file {file_path}: {e}")
-            return None
+        results = {}
+        for doc_id, content in documents.items():
+            results[doc_id] = self.add_document(doc_id, content)
+        return results
     
-    def get_document_content(self, doc_id: str) -> Optional[str]:
+    def get_document(self, doc_id: str) -> Optional[str]:
         """
         Get document content by ID.
         
@@ -123,153 +94,196 @@ class DocumentStore:
             doc_id: Document ID
             
         Returns:
-            Document content or None if not found
+            Document content or None
         """
-        return self.documents.get(doc_id)
+        return self.documents.get(doc_id, {}).get('content')
     
-    def get_document_metadata(self, doc_id: str) -> Optional[Dict]:
-        """
-        Get document metadata by ID.
+    def get_document_with_metadata(self, doc_id: str) -> Optional[Dict]:
+        """Get document with metadata."""
+        if doc_id not in self.documents:
+            return None
         
-        Args:
-            doc_id: Document ID
-            
-        Returns:
-            Document metadata or None if not found
-        """
-        return self.metadata.get(doc_id)
+        return {
+            'doc_id': doc_id,
+            'content': self.documents[doc_id]['content'],
+            'metadata': self.metadata.get(doc_id, {}),
+            'added_at': self.documents[doc_id]['added_at'],
+        }
+    
+    def remove_document(self, doc_id: str) -> bool:
+        """Remove a document."""
+        try:
+            if doc_id in self.documents:
+                del self.documents[doc_id]
+                if doc_id in self.metadata:
+                    del self.metadata[doc_id]
+                self.doc_ids.remove(doc_id)
+                self.logger.info(f"Document removed: {doc_id}")
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"Error removing document: {e}")
+            return False
+    
+    def remove_documents(self, doc_ids: List[str]) -> Dict[str, bool]:
+        """Remove multiple documents."""
+        results = {}
+        for doc_id in doc_ids:
+            results[doc_id] = self.remove_document(doc_id)
+        return results
     
     def get_all_documents(self) -> Dict[str, str]:
         """
         Get all documents.
         
         Returns:
-            Dictionary mapping doc_id to content
+            Dict mapping doc_id -> content
         """
-        return self.documents.copy()
+        return {
+            doc_id: data['content']
+            for doc_id, data in self.documents.items()
+        }
     
-    def remove_document(self, doc_id: str) -> bool:
-        """
-        Remove a document from the store.
-        
-        Args:
-            doc_id: Document ID to remove
-            
-        Returns:
-            True if document was removed successfully
-        """
+    def list_documents(self) -> List[str]:
+        """List all document IDs."""
+        return self.doc_ids.copy()
+    
+    def document_exists(self, doc_id: str) -> bool:
+        """Check if document exists."""
+        return doc_id in self.documents
+    
+    def get_document_count(self) -> int:
+        """Get total number of documents."""
+        return len(self.documents)
+    
+    def get_document_metadata(self, doc_id: str) -> Optional[Dict]:
+        """Get metadata for a document."""
+        return self.metadata.get(doc_id)
+    
+    def update_document_metadata(self, doc_id: str, metadata: Dict) -> bool:
+        """Update metadata for a document."""
         try:
             if doc_id not in self.documents:
                 return False
             
-            # Remove from memory
-            del self.documents[doc_id]
-            del self.metadata[doc_id]
+            if doc_id not in self.metadata:
+                self.metadata[doc_id] = {}
             
-            # Remove file
-            doc_file = self.storage_path / f"{doc_id}.txt"
-            if doc_file.exists():
-                doc_file.unlink()
-            
-            # Update index
-            self._save_index()
-            
+            self.metadata[doc_id].update(metadata)
+            self.logger.info(f"Metadata updated for: {doc_id}")
             return True
-            
         except Exception as e:
-            print(f"Error removing document {doc_id}: {e}")
+            self.logger.error(f"Error updating metadata: {e}")
             return False
     
-    def list_documents(self) -> List[Dict]:
+    def search_documents(self, query: str) -> List[str]:
         """
-        List all documents with their metadata.
-        
-        Returns:
-            List of document info dictionaries
-        """
-        documents_info = []
-        for doc_id, content in self.documents.items():
-            info = {
-                'doc_id': doc_id,
-                'content_length': len(content),
-                **self.metadata.get(doc_id, {})
-            }
-            documents_info.append(info)
-        
-        return documents_info
-    
-    def search_documents_by_name(self, filename_pattern: str) -> List[str]:
-        """
-        Search documents by filename pattern.
+        Simple text search across documents.
         
         Args:
-            filename_pattern: Pattern to search for in filenames
+            query: Search query
             
         Returns:
-            List of matching document IDs
+            List of matching doc_ids
         """
-        matches = []
-        pattern_lower = filename_pattern.lower()
-        
-        for doc_id, metadata in self.metadata.items():
-            filename = metadata.get('filename', '').lower()
-            if pattern_lower in filename:
-                matches.append(doc_id)
-        
-        return matches
-    
-    def get_storage_stats(self) -> Dict:
-        """
-        Get storage statistics.
-        
-        Returns:
-            Dictionary with storage statistics
-        """
-        total_size = sum(len(content) for content in self.documents.values())
-        
-        return {
-            'total_documents': len(self.documents),
-            'total_size_chars': total_size,
-            'storage_path': str(self.storage_path),
-            'avg_document_size': total_size / max(1, len(self.documents))
-        }
-    
-    def _load_index(self) -> None:
-        """Load document index from file."""
         try:
-            if self.index_file.exists():
-                with open(self.index_file, 'r', encoding='utf-8') as f:
-                    index_data = json.load(f)
-                    
-                self.metadata = index_data.get('metadata', {})
-                
-                # Load document content from individual files
-                for doc_id in self.metadata.keys():
-                    doc_file = self.storage_path / f"{doc_id}.txt"
-                    if doc_file.exists():
-                        with open(doc_file, 'r', encoding='utf-8') as f:
-                            self.documents[doc_id] = f.read()
-                            
+            query_lower = query.lower()
+            matching = []
+            
+            for doc_id, data in self.documents.items():
+                content_lower = data['content'].lower()
+                if query_lower in content_lower:
+                    matching.append(doc_id)
+            
+            return matching
         except Exception as e:
-            print(f"Error loading index: {e}")
-            self.documents = {}
-            self.metadata = {}
+            self.logger.error(f"Error searching documents: {e}")
+            return []
     
-    def _save_index(self) -> None:
-        """Save document index to file."""
+    def save_to_disk(self) -> bool:
+        """Save documents to disk."""
         try:
-            index_data = {
-                'metadata': self.metadata,
-                'last_updated': self._get_timestamp()
+            format = self.config.get('storage.persistence_format', 'pickle')
+            
+            if format == 'json':
+                file_path = self.storage_path / 'documents.json'
+                with open(file_path, 'w') as f:
+                    json.dump({
+                        'documents': self.documents,
+                        'metadata': self.metadata,
+                    }, f)
+            else:  # pickle
+                file_path = self.storage_path / 'documents.pkl'
+                with open(file_path, 'wb') as f:
+                    pickle.dump({
+                        'documents': self.documents,
+                        'metadata': self.metadata,
+                    }, f)
+            
+            self.logger.info(f"Documents saved to: {file_path}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error saving documents: {e}")
+            return False
+    
+    def _load_documents(self) -> bool:
+        """Load documents from disk."""
+        try:
+            format = self.config.get('storage.persistence_format', 'pickle')
+            
+            if format == 'json':
+                file_path = self.storage_path / 'documents.json'
+            else:
+                file_path = self.storage_path / 'documents.pkl'
+            
+            if not file_path.exists():
+                return False
+            
+            if format == 'json':
+                with open(file_path, 'r') as f:
+                    data = json.load(f)
+            else:
+                with open(file_path, 'rb') as f:
+                    data = pickle.load(f)
+            
+            self.documents = data.get('documents', {})
+            self.metadata = data.get('metadata', {})
+            self.doc_ids = list(self.documents.keys())
+            
+            self.logger.info(f"Loaded {len(self.documents)} documents from disk")
+            return True
+        except Exception as e:
+            self.logger.warning(f"Could not load documents: {e}")
+            return False
+    
+    def clear(self) -> bool:
+        """Clear all documents."""
+        try:
+            self.documents.clear()
+            self.metadata.clear()
+            self.doc_ids.clear()
+            self.logger.info("DocumentStore cleared")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error clearing store: {e}")
+            return False
+    
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get store statistics."""
+        try:
+            total_size = sum(
+                len(data['content'])
+                for data in self.documents.values()
+            )
+            
+            avg_size = total_size / len(self.documents) if self.documents else 0
+            
+            return {
+                'total_documents': len(self.documents),
+                'total_size_bytes': total_size,
+                'average_document_size': avg_size,
+                'doc_ids': self.doc_ids,
             }
-            
-            with open(self.index_file, 'w', encoding='utf-8') as f:
-                json.dump(index_data, f, indent=2, ensure_ascii=False)
-                
         except Exception as e:
-            print(f"Error saving index: {e}")
-    
-    def _get_timestamp(self) -> str:
-        """Get current timestamp string."""
-        from datetime import datetime
-        return datetime.now().isoformat()
+            self.logger.error(f"Error getting statistics: {e}")
+            return {}

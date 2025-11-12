@@ -1,132 +1,261 @@
 """
-TF-IDF indexing module for Questify search engine.
-Implements TF-IDF vectorization and inverted index construction.
+core/indexer.py - Document Indexing for Questify VLM
+
+Supports:
+- TF-IDF based text document indexing
+- VLM-based visual document indexing  
+- Hybrid index management
 """
 
-import math
-from collections import defaultdict, Counter
-from typing import Dict, List, Set, Tuple
-from utils.text_preprocessor import TextPreprocessor
+import numpy as np
+import logging
+from scipy.sparse import csr_matrix
+from typing import Dict, List, Tuple, Optional, Any
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.preprocessing import normalize
+import pickle
+from pathlib import Path
 
 
 class TFIDFIndexer:
-    """Builds TF-IDF vectors and inverted index for documents."""
+    """TF-IDF based text document indexing using scikit-learn."""
     
-    def __init__(self, preprocessor: TextPreprocessor):
-        """
-        Initialize TF-IDF indexer.
+    def __init__(self, config):
+        """Initialize TF-IDF indexer with configuration."""
+        self.config = config
+        self.logger = logging.getLogger(self.__class__.__name__)
         
-        Args:
-            preprocessor: Text preprocessor instance
-        """
-        self.preprocessor = preprocessor
-        self.documents = {}  # doc_id -> processed tokens
-        self.vocabulary = {}  # term -> term_id
-        self.inverted_index = defaultdict(set)  # term -> set of doc_ids
-        self.document_frequencies = {}  # term -> number of docs containing term
-        self.document_norms = {}  # doc_id -> L2 norm of document vector
-        self.tfidf_vectors = {}  # doc_id -> {term: tfidf_score}
-        self.total_documents = 0
+        # Initialize TF-IDF vectorizer
+        self.vectorizer = TfidfVectorizer(
+            lowercase=config.get('text_preprocessing.lowercase', True),
+            stop_words='english' if config.get('text_preprocessing.remove_stopwords', True) else None,
+            min_df=1,
+            max_df=0.9,
+            sublinear_tf=True,
+            use_idf=True,
+        )
         
+        self.documents = {}  # doc_id -> text
+        self.doc_ids = []    # ordered doc ids
+        self.tfidf_matrix = None
+        self.vocabulary = {}
+        
+        self.logger.info("TFIDFIndexer initialized")
+    
     def add_documents(self, documents: Dict[str, str]) -> None:
         """
-        Add documents to the index.
+        Add text documents to TF-IDF index.
         
         Args:
-            documents: Dictionary mapping doc_id to document text
+            documents: Dict mapping doc_id -> text content
         """
-        for doc_id, text in documents.items():
-            tokens = self.preprocessor.preprocess(text)
-            self.documents[doc_id] = tokens
+        try:
+            self.documents.update(documents)
+            self.doc_ids = list(self.documents.keys())
             
-            # Update vocabulary and inverted index
-            unique_terms = set(tokens)
-            for term in unique_terms:
-                if term not in self.vocabulary:
-                    self.vocabulary[term] = len(self.vocabulary)
-                self.inverted_index[term].add(doc_id)
-        
-        self.total_documents = len(self.documents)
-        
-    def build_index(self) -> None:
-        """Build TF-IDF vectors and compute document norms."""
-        # Calculate document frequencies
-        for term in self.vocabulary:
-            self.document_frequencies[term] = len(self.inverted_index[term])
-        
-        # Build TF-IDF vectors
-        for doc_id, tokens in self.documents.items():
-            term_counts = Counter(tokens)
-            doc_length = len(tokens)
-            tfidf_vector = {}
+            # Rebuild TF-IDF matrix
+            texts = [self.documents[doc_id] for doc_id in self.doc_ids]
+            self.tfidf_matrix = self.vectorizer.fit_transform(texts)
+            self.vocabulary = self.vectorizer.vocabulary_
             
-            for term, count in term_counts.items():
-                # Calculate TF
-                tf = count / doc_length
-                
-                # Calculate IDF
-                idf = math.log(self.total_documents / self.document_frequencies[term])
-                
-                # Calculate TF-IDF
-                tfidf_score = tf * idf
-                tfidf_vector[term] = tfidf_score
-            
-            self.tfidf_vectors[doc_id] = tfidf_vector
-            
-            # Calculate document norm (L2 norm)
-            norm = math.sqrt(sum(score**2 for score in tfidf_vector.values()))
-            self.document_norms[doc_id] = norm
+            self.logger.info(f"Added {len(documents)} documents. Total: {len(self.documents)}")
+        except Exception as e:
+            self.logger.error(f"Error adding documents: {e}")
+            raise
     
-    def get_candidate_documents(self, query_terms: List[str]) -> Set[str]:
+    def remove_documents(self, doc_ids: List[str]) -> None:
+        """Remove documents from index."""
+        try:
+            for doc_id in doc_ids:
+                if doc_id in self.documents:
+                    del self.documents[doc_id]
+            
+            self.doc_ids = list(self.documents.keys())
+            
+            if len(self.documents) > 0:
+                texts = [self.documents[doc_id] for doc_id in self.doc_ids]
+                self.tfidf_matrix = self.vectorizer.fit_transform(texts)
+                self.vocabulary = self.vectorizer.vocabulary_
+            
+            self.logger.info(f"Removed {len(doc_ids)} documents")
+        except Exception as e:
+            self.logger.error(f"Error removing documents: {e}")
+            raise
+    
+    def get_document_vector(self, doc_id: str) -> Optional[np.ndarray]:
+        """Get TF-IDF vector for a document."""
+        try:
+            if doc_id not in self.doc_ids or self.tfidf_matrix is None:
+                return None
+            
+            idx = self.doc_ids.index(doc_id)
+            return self.tfidf_matrix.getrow(idx).toarray().flatten()
+        except Exception as e:
+            self.logger.error(f"Error getting document vector: {e}")
+            return None
+    
+    def get_all_vectors(self) -> np.ndarray:
+        """Get all document vectors as matrix."""
+        if self.tfidf_matrix is None:
+            return np.array([])
+
+        return csr_matrix(self.tfidf_matrix).toarray()
+    
+    def get_vocabulary(self) -> Dict[str, int]:
+        """Get word -> ID vocabulary mapping."""
+        return self.vocabulary.copy() if self.vocabulary else {}
+    
+    def index_size(self) -> int:
+        """Get number of indexed documents."""
+        return len(self.documents)
+    
+    def get_document_text(self, doc_id: str) -> Optional[str]:
+        """Get original text of a document."""
+        return self.documents.get(doc_id)
+    
+    def list_documents(self) -> List[str]:
+        """List all document IDs."""
+        return self.doc_ids.copy()
+
+
+class VLMDocumentIndexer:
+    """VLM-based visual document indexing."""
+    
+    def __init__(self, config, vlm_embedder):
+        """Initialize VLM document indexer."""
+        self.config = config
+        self.vlm_embedder = vlm_embedder
+        self.logger = logging.getLogger(self.__class__.__name__)
+        
+        self.documents = {}  # doc_id -> metadata
+        self.embeddings = {}  # doc_id -> embedding
+        self.doc_ids = []
+        
+        self.logger.info("VLMDocumentIndexer initialized")
+    
+    def add_visual_documents(self,
+                           image_paths: List[str],
+                           doc_ids: List[str],
+                           batch_size: int = 1) -> Dict[str, Any]:
         """
-        Get documents that contain at least one query term.
+        Index visual documents (images/PDFs) with VLM.
         
         Args:
-            query_terms: List of query terms
+            image_paths: List of paths to images/PDFs
+            doc_ids: List of document IDs
+            batch_size: Batch size for processing
             
         Returns:
-            Set of candidate document IDs
+            Dict with success stats
         """
-        candidates = set()
-        for term in query_terms:
-            if term in self.inverted_index:
-                candidates.update(self.inverted_index[term])
-        return candidates
-    
-    def get_query_vector(self, query_terms: List[str]) -> Dict[str, float]:
-        """
-        Convert query to TF-IDF vector.
+        if len(image_paths) != len(doc_ids):
+            raise ValueError("image_paths and doc_ids must have same length")
         
-        Args:
-            query_terms: List of query terms
+        indexed = 0
+        failed = 0
+        
+        try:
+            for i, (image_path, doc_id) in enumerate(zip(image_paths, doc_ids)):
+                try:
+                    # Generate VLM embedding
+                    embedding = self.vlm_embedder.encode_image(image_path)
+                    
+                    self.documents[doc_id] = {
+                        'path': image_path,
+                        'indexed_at': None,
+                    }
+                    self.embeddings[doc_id] = embedding
+                    indexed += 1
+                    
+                except Exception as e:
+                    self.logger.warning(f"Failed to index {doc_id}: {e}")
+                    failed += 1
             
-        Returns:
-            Query TF-IDF vector
-        """
-        if not query_terms:
-            return {}
+            self.doc_ids = list(self.documents.keys())
+            self.logger.info(f"VLM indexing complete: {indexed} success, {failed} failed")
             
-        term_counts = Counter(query_terms)
-        query_length = len(query_terms)
-        query_vector = {}
-        
-        for term, count in term_counts.items():
-            if term in self.vocabulary:
-                # Calculate TF
-                tf = count / query_length
-                
-                # Calculate IDF
-                idf = math.log(self.total_documents / self.document_frequencies[term])
-                
-                # Calculate TF-IDF
-                query_vector[term] = tf * idf
-        
-        return query_vector
+            return {
+                'success': failed == 0,
+                'indexed': indexed,
+                'failed': failed,
+            }
+        except Exception as e:
+            self.logger.error(f"Error in add_visual_documents: {e}")
+            raise
     
-    def get_statistics(self) -> Dict:
-        """Get indexer statistics."""
+    def remove_visual_document(self, doc_id: str) -> bool:
+        """Remove a visual document."""
+        if doc_id in self.documents:
+            del self.documents[doc_id]
+            del self.embeddings[doc_id]
+            self.doc_ids.remove(doc_id)
+            return True
+        return False
+    
+    def get_document_embedding(self, doc_id: str) -> Optional[np.ndarray]:
+        """Get VLM embedding for a document."""
+        return self.embeddings.get(doc_id)
+    
+    def get_all_embeddings(self) -> Dict[str, np.ndarray]:
+        """Get all visual document embeddings."""
+        return self.embeddings.copy()
+    
+    def index_size(self) -> int:
+        """Get number of indexed visual documents."""
+        return len(self.documents)
+    
+    def list_documents(self) -> List[str]:
+        """List all visual document IDs."""
+        return self.doc_ids.copy()
+
+
+class HybridIndexManager:
+    """Manages both text and VLM indexes."""
+    
+    def __init__(self, config, tfidf_indexer, vlm_indexer):
+        """Initialize hybrid index manager."""
+        self.config = config
+        self.tfidf_indexer = tfidf_indexer
+        self.vlm_indexer = vlm_indexer
+        self.logger = logging.getLogger(self.__class__.__name__)
+    
+    def get_index_stats(self) -> Dict[str, Any]:
+        """Get statistics about both indexes."""
         return {
-            'total_documents': self.total_documents,
-            'vocabulary_size': len(self.vocabulary),
-            'average_document_length': sum(len(tokens) for tokens in self.documents.values()) / max(1, self.total_documents)
+            'text_documents': self.tfidf_indexer.index_size(),
+            'visual_documents': self.vlm_indexer.index_size(),
+            'total_documents': (
+                self.tfidf_indexer.index_size() + 
+                self.vlm_indexer.index_size()
+            ),
+            'text_indexed': self.tfidf_indexer.index_size() > 0,
+            'visual_indexed': self.vlm_indexer.index_size() > 0,
+        }
+    
+    def validate_indexes(self) -> bool:
+        """Validate both indexes are healthy."""
+        try:
+            # Check text index
+            if self.tfidf_indexer.index_size() > 0:
+                if self.tfidf_indexer.get_all_vectors().shape[0] == 0:
+                    self.logger.error("Text index validation failed")
+                    return False
+            
+            # Check VLM index
+            if self.vlm_indexer.index_size() > 0:
+                if len(self.vlm_indexer.get_all_embeddings()) == 0:
+                    self.logger.error("VLM index validation failed")
+                    return False
+            
+            self.logger.info("Both indexes validated successfully")
+            return True
+        except Exception as e:
+            self.logger.error(f"Index validation error: {e}")
+            return False
+    
+    def get_all_document_ids(self) -> Dict[str, List[str]]:
+        """Get all document IDs from both indexes."""
+        return {
+            'text_documents': self.tfidf_indexer.list_documents(),
+            'visual_documents': self.vlm_indexer.list_documents(),
         }

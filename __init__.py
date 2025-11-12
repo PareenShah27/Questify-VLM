@@ -8,8 +8,8 @@ This package provides a complete search engine implementation with:
 - Web interface with Streamlit
 """
 
-from .main.main import QuestifySearchEngine
-from .main.config import config
+from .files.main import QuestifySearchEngine
+from .files.config import config
 
 __version__ = "1.0.0"
 __author__ = "Questify Development Team"
