@@ -1,0 +1,14 @@
+# Questify Search Engine Requirements
+
+# Core dependencies
+streamlit>=1.28.0
+
+# Optional dependencies for enhanced functionality
+# pandas>=1.5.0        # For data manipulation (if needed)
+# numpy>=1.24.0        # For numerical operations (if needed)
+# nltk>=3.8.0          # For advanced text processing (if needed)
+
+# Development dependencies (uncomment if needed)
+# pytest>=7.0.0        # For testing
+# black>=22.0.0        # For code formatting
+# flake8>=5.0.0        # For linting
