@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
 """
-test_engine.py - FIXED & REFACTORED for Questify VLM
-
-Fixed comprehensive test suite for local testing without Streamlit.
-
-✅ FIXED: Import paths
-✅ FIXED: Config access
-✅ FIXED: Error handling and test continuation
-✅ FIXED: Better formatted output
+test_engine.py - comprehensive test suite for local testing without Streamlit.
 """
 
 import sys
