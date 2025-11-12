@@ -1,24 +1,118 @@
 {
   "text_preprocessing": {
+    "lowercase": true,
+    "remove_punctuation": true,
     "remove_stopwords": true,
-    "min_token_length": 3
+    "min_token_length": 3,
+    "remove_urls": true,
+    "max_doc_length": 5000
   },
+  
   "search": {
-    "max_results": 10,
-    "min_similarity_score": 0.01
+    "search_mode": "auto",
+    "max_results": 50,
+    "min_similarity_score": 0.01,
+    "enable_caching": true,
+    "cache_ttl_seconds": 3600
   },
+  
+  "vlm": {
+    "enabled": true,
+    "model_name": "vidore/colqwen2-v1.0",
+    "device": "auto",
+    "batch_size": 1,
+    "load_in_8bit": false,
+    "enable_quantization": false,
+    "chunk_size": 512,
+    "stride": 256,
+    "max_sequence_length": 2048
+  },
+  
+  "hybrid": {
+    "text_weight": 0.5,
+    "vlm_weight": 0.5,
+    "ensemble_method": "rrf",
+    "diversity_penalty": 0.1,
+    "reranking_enabled": false
+  },
+  
   "storage": {
+    "enable_persistence": true,
+    "persistence_format": "pickle",
+    "compression_enabled": false,
     "documents_path": "documents",
-    "enable_persistence": true
+    "images_path": "images",
+    "vector_store_path": "vector_store",
+    "backup_enabled": true,
+    "backup_frequency": "daily"
   },
+  
   "performance": {
     "enable_caching": true,
-    "cache_size_limit": 1000
+    "cache_size_limit": 1000,
+    "batch_processing": true,
+    "max_batch_size": 32,
+    "num_workers": 4,
+    "enable_profiling": false
   },
+  
   "ui": {
-    "page_title": "Questify - Text Search Engine",
+    "page_title": "Questify VLM - Multimodal Search Engine",
+    "page_icon": "🔍",
+    "layout": "wide",
     "results_per_page": 10,
     "enable_file_upload": true,
-    "max_file_size_mb": 10
+    "max_file_size_mb": 100,
+    "theme": "light",
+    "show_advanced_options": true,
+    "enable_search_history": true,
+    "max_history_entries": 50
+  },
+  
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "log_file": "questify.log",
+    "max_file_size_mb": 100,
+    "backup_count": 5
+  },
+  
+  "api": {
+    "enable_rest_api": false,
+    "api_port": 8000,
+    "api_host": "0.0.0.0",
+    "enable_cors": true,
+    "rate_limit_requests": 1000,
+    "rate_limit_window_seconds": 3600
+  },
+  
+  "security": {
+    "enable_auth": false,
+    "require_token": false,
+    "token_expiry_hours": 24,
+    "allow_file_uploads": true,
+    "max_upload_size_mb": 100,
+    "allowed_extensions": [".txt", ".pdf", ".png", ".jpg", ".jpeg", ".md", ".docx"]
+  },
+  
+  "features": {
+    "enable_text_search": true,
+    "enable_vlm_search": true,
+    "enable_hybrid_search": true,
+    "enable_document_upload": true,
+    "enable_batch_search": true,
+    "enable_advanced_filtering": true,
+    "enable_faceted_search": false,
+    "enable_spell_correction": false
+  },
+  
+  "advanced": {
+    "late_interaction_scoring": true,
+    "colpali_enabled": true,
+    "similarity_method": "cosine",
+    "ranking_strategy": "hybrid",
+    "semantic_search_enabled": true,
+    "use_dense_retrieval": true,
+    "use_sparse_retrieval": true
   }
 }
