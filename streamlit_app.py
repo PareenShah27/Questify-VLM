@@ -1,12 +1,11 @@
 """
-files/streamlit_app.py - Questify VLM Web UI
+files/streamlit_app.py - Questify VLM Web UI (Enhanced)
 
-Interactive Streamlit interface for the search engine supporting:
-- Text search
-- Visual search
-- Hybrid search
-- Document management
-- Configuration management
+Interactive Streamlit interface with:
+- Multi-format document upload (text, images, PDFs, docx, markdown)
+- Streamlined navigation (no separate config page)
+- Statistics in sidebar
+- Improved UX/layout
 """
 
 import streamlit as st
@@ -14,7 +13,8 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 import time
-import json
+import tempfile
+import os
 
 from files.main import QuestifySearchEngine
 from files.config import QuestifyConfig
@@ -37,7 +37,7 @@ st.markdown("""
         padding: 2rem;
     }
     .stTabs [data-baseweb="tab-list"] button {
-        font-size: 1.2em;
+        font-size: 1.1em;
         padding: 0.5rem 1rem;
     }
     .result-card {
@@ -53,6 +53,13 @@ st.markdown("""
         padding: 1rem;
         border-radius: 8px;
         text-align: center;
+    }
+    .upload-box {
+        border: 2px dashed #667eea;
+        border-radius: 8px;
+        padding: 1.5rem;
+        text-align: center;
+        background: #f0f4ff;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -73,25 +80,25 @@ def get_type_detector():
 
 # ==================== HELPER FUNCTIONS ====================
 
-def display_result_card(result: Dict, search_type: str) -> None:
+def display_result_card(result: Dict, search_type: str, index: int) -> None:
     """Display a single search result."""
     with st.container():
         col1, col2 = st.columns([3, 1])
         
         with col1:
             doc_id = result.get('doc_id', 'Unknown')
-            st.write(f"**Document ID:** `{doc_id}`")
+            st.write(f"**{index}. {doc_id}**")
             
             if search_type == 'text' or search_type == 'hybrid':
                 content = result.get('content', '')
                 if content:
                     preview = content[:200] + "..." if len(content) > 200 else content
-                    st.write(f"**Preview:** {preview}")
+                    st.caption(f"📝 {preview}")
             
             if search_type == 'vlm' or search_type == 'hybrid':
                 path = result.get('path', '')
                 if path:
-                    st.write(f"**File:** {Path(path).name}")
+                    st.caption(f"📄 {Path(path).name}")
         
         with col2:
             if search_type == 'text':
@@ -109,13 +116,57 @@ def display_statistics(stats: Dict) -> None:
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Text Documents", stats['documents']['text'])
+        st.metric("📝 Text Docs", stats['documents']['text'])
     with col2:
-        st.metric("Visual Documents", stats['documents']['visual'])
+        st.metric("🖼️ Visual Docs", stats['documents']['visual'])
     with col3:
-        st.metric("Vector Records", stats['documents']['vectors'])
+        st.metric("🔢 Vectors", stats['documents']['vectors'])
     with col4:
-        st.metric("Total Queries", stats['performance']['total_queries'])
+        st.metric("🔍 Total Queries", stats['performance']['total_queries'])
+
+def process_uploaded_file(uploaded_file, document_id: str, engine: QuestifySearchEngine) -> bool:
+    """
+    Process and add uploaded file to engine.
+    
+    Supports: TXT, PDF, PNG, JPG, JPEG, DOCX, MD, etc.
+    """
+    try:
+        file_ext = Path(uploaded_file.name).suffix.lower()
+        
+        # Text formats
+        if file_ext in ['.txt', '.md', '.docx']:
+            content = uploaded_file.read().decode('utf-8', errors='ignore')
+            engine.add_text_documents({document_id: content})
+            return True
+        
+        # Image formats
+        elif file_ext in ['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp']:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+                tmp.write(uploaded_file.getbuffer())
+                tmp_path = tmp.name
+            engine.add_visual_documents([tmp_path], [document_id])
+            # Clean up temp file
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            return True
+        
+        # PDF format
+        elif file_ext == '.pdf':
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+                tmp.write(uploaded_file.getbuffer())
+                tmp_path = tmp.name
+            engine.add_visual_documents([tmp_path], [document_id])
+            # Clean up temp file
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            return True
+        
+        else:
+            return False
+    
+    except Exception as e:
+        st.error(f"Error processing file: {e}")
+        return False
 
 # ==================== MAIN APP ====================
 
@@ -123,286 +174,195 @@ def main():
     """Main Streamlit application."""
     
     # Header
-    st.title("🔍 Questify VLM - Multimodal Search Engine")
-    st.markdown("**AI-Powered Text & Visual Document Search**")
+    st.title("🔍 Questify VLM")
+    st.markdown("**AI-Powered Multimodal Document Search**")
     
     # Initialize engine
     engine = get_search_engine()
     type_detector = get_type_detector()
     
-    # Sidebar navigation
+    # ==================== SIDEBAR ====================
+    
     with st.sidebar:
-        st.header("⚙️ Navigation")
-        page = st.radio(
-            "Select Page:",
-            ["🔍 Search", "📚 Documents", "⚡ Configuration", "📊 Statistics"]
-        )
+        st.header("⚙️ Settings")
         
-        st.divider()
-        
-        st.header("🎯 Quick Settings")
         search_mode = st.selectbox(
             "Search Mode:",
             ["auto", "text", "vlm", "hybrid"],
-            help="Select search type: auto=intelligent routing, text=TF-IDF, vlm=Vision-Language, hybrid=combined"
+            help="auto=intelligent routing, text=TF-IDF, vlm=Vision-Language, hybrid=combined"
         )
         
         top_k = st.slider(
-            "Top Results:",
+            "Results:",
             min_value=1,
             max_value=50,
             value=10,
-            help="Number of results to return"
         )
-    
-    # ==================== SEARCH PAGE ====================
-    
-    if page == "🔍 Search":
-        st.header("Search Documents")
-        
-        tab1, tab2, tab3 = st.tabs(["📝 Text Search", "🖼️ Visual Search", "⚡ Hybrid Search"])
-        
-        # Text Search Tab
-        with tab1:
-            st.subheader("Search Text Documents (TF-IDF)")
-            
-            text_query = st.text_input(
-                "Enter search query:",
-                placeholder="e.g., machine learning algorithms...",
-                key="text_query"
-            )
-            
-            if st.button("🔍 Search Text", key="btn_text_search"):
-                if text_query:
-                    with st.spinner("Searching..."):
-                        start_time = time.time()
-                        results = engine.search_text(text_query, top_k=top_k)
-                        search_time = time.time() - start_time
-                    
-                    st.success(f"✅ Found {len(results)} results in {search_time:.3f}s")
-                    
-                    if results:
-                        for i, result in enumerate(results, 1):
-                            with st.container():
-                                col1, col2 = st.columns([3, 1])
-                                with col1:
-                                    st.write(f"**{i}. {result.get('doc_id', 'Unknown')}**")
-                                    content = result.get('content', '')
-                                    if content:
-                                        preview = content[:150] + "..." if len(content) > 150 else content
-                                        st.caption(preview)
-                                with col2:
-                                    score = result.get('score', 0)
-                                    st.metric("Score", f"{score:.3f}")
-                                st.divider()
-                else:
-                    st.warning("⚠️ Please enter a search query")
-        
-        # Visual Search Tab
-        with tab2:
-            st.subheader("Search Visual Documents (VLM)")
-            
-            vlm_query = st.text_input(
-                "Enter visual search query:",
-                placeholder="e.g., find similar documents to...",
-                key="vlm_query"
-            )
-            
-            if st.button("🖼️ Search Visual", key="btn_vlm_search"):
-                if vlm_query:
-                    with st.spinner("Searching..."):
-                        start_time = time.time()
-                        results = engine.search_vlm(vlm_query, top_k=top_k)
-                        search_time = time.time() - start_time
-                    
-                    st.success(f"✅ Found {len(results)} results in {search_time:.3f}s")
-                    
-                    if results:
-                        for i, result in enumerate(results, 1):
-                            with st.container():
-                                col1, col2 = st.columns([3, 1])
-                                with col1:
-                                    st.write(f"**{i}. {result.get('doc_id', 'Unknown')}**")
-                                    path = result.get('path', '')
-                                    if path:
-                                        st.caption(f"📄 {Path(path).name}")
-                                with col2:
-                                    score = result.get('vlm_score', 0)
-                                    st.metric("VLM Score", f"{score:.3f}")
-                                st.divider()
-                else:
-                    st.warning("⚠️ Please enter a search query")
-        
-        # Hybrid Search Tab
-        with tab3:
-            st.subheader("Hybrid Search (Text + Visual)")
-            
-            hybrid_query = st.text_input(
-                "Enter search query:",
-                placeholder="Search across all documents...",
-                key="hybrid_query"
-            )
-            
-            if st.button("⚡ Search Hybrid", key="btn_hybrid_search"):
-                if hybrid_query:
-                    with st.spinner("Searching..."):
-                        start_time = time.time()
-                        results = engine.search_hybrid(hybrid_query, top_k=top_k)
-                        search_time = time.time() - start_time
-                    
-                    st.success(f"✅ Found {len(results)} results in {search_time:.3f}s")
-                    
-                    if results:
-                        for i, result in enumerate(results, 1):
-                            with st.container():
-                                col1, col2 = st.columns([3, 1])
-                                with col1:
-                                    st.write(f"**{i}. {result.get('doc_id', 'Unknown')}**")
-                                    if result.get('content'):
-                                        st.caption(f"📝 {result['content'][:100]}...")
-                                    elif result.get('path'):
-                                        st.caption(f"🖼️ {Path(result['path']).name}")
-                                with col2:
-                                    score = result.get('hybrid_score', 0)
-                                    st.metric("Score", f"{score:.3f}")
-                                st.divider()
-                else:
-                    st.warning("⚠️ Please enter a search query")
-    
-    # ==================== DOCUMENTS PAGE ====================
-    
-    elif page == "📚 Documents":
-        st.header("Document Management")
-        
-        tab1, tab2 = st.tabs(["➕ Add Documents", "📋 View Documents"])
-        
-        # Add Documents Tab
-        with tab1:
-            st.subheader("Add Text Documents")
-            
-            num_docs = st.number_input("Number of documents:", min_value=1, max_value=10, value=1)
-            
-            docs_to_add = {}
-            for i in range(int(num_docs)):
-                doc_id = st.text_input(f"Document ID {i+1}:", value=f"doc_{i+1}", key=f"doc_id_{i}")
-                content = st.text_area(f"Content {i+1}:", key=f"doc_content_{i}", height=100)
-                
-                if doc_id and content:
-                    docs_to_add[doc_id] = content
-            
-            if st.button("💾 Add Documents"):
-                if docs_to_add:
-                    with st.spinner("Adding documents..."):
-                        results = engine.add_text_documents(docs_to_add)
-                    
-                    success_count = sum(1 for v in results.values() if v)
-                    st.success(f"✅ Added {success_count}/{len(results)} documents")
-                else:
-                    st.warning("⚠️ Please enter document data")
-        
-        # View Documents Tab
-        with tab2:
-            st.subheader("Indexed Documents")
-            
-            # Text Documents
-            with st.expander("📝 Text Documents"):
-                text_docs = engine.document_store.list_documents()
-                if text_docs:
-                    st.write(f"Total: {len(text_docs)}")
-                    for doc_id in text_docs:
-                        with st.container():
-                            st.write(f"**{doc_id}**")
-                            metadata = engine.document_store.get_document_metadata(doc_id)
-                            if metadata:
-                                st.caption(f"Size: {metadata.get('size', 0)} bytes | Words: {metadata.get('word_count', 0)}")
-                            st.divider()
-                else:
-                    st.info("No text documents")
-            
-            # Visual Documents
-            with st.expander("🖼️ Visual Documents"):
-                visual_docs = engine.image_store.list_documents()
-                if visual_docs:
-                    st.write(f"Total: {len(visual_docs)}")
-                    for doc_id in visual_docs:
-                        with st.container():
-                            st.write(f"**{doc_id}**")
-                            info = engine.image_store.get_document_info(doc_id)
-                            if info:
-                                st.caption(f"File: {Path(info['path']).name}")
-                            st.divider()
-                else:
-                    st.info("No visual documents")
-    
-    # ==================== CONFIGURATION PAGE ====================
-    
-    elif page == "⚙️ Configuration":
-        st.header("Configuration Management")
-        
-        config_display = engine.config.summary()
-        st.code(config_display, language="text")
         
         st.divider()
         
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("💾 Save Current State"):
-                with st.spinner("Saving..."):
-                    if engine.save_state():
-                        st.success("✅ State saved successfully")
-                    else:
-                        st.error("❌ Error saving state")
-        
-        with col2:
-            if st.button("🗑️ Clear All Data"):
-                with st.spinner("Clearing..."):
-                    if engine.clear_all():
-                        st.success("✅ All data cleared")
-                    else:
-                        st.error("❌ Error clearing data")
-    
-    # ==================== STATISTICS PAGE ====================
-    
-    elif page == "📊 Statistics":
-        st.header("Engine Statistics")
-        
+        st.header("📊 Statistics")
         stats = engine.get_statistics()
-        
-        # Metrics
         display_statistics(stats)
         
         st.divider()
         
-        # Performance Metrics
-        st.subheader("Performance Metrics")
-        perf = stats['performance']
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Text Searches", perf['text_searches'])
-        with col2:
-            st.metric("VLM Searches", perf['vlm_searches'])
-        with col3:
-            st.metric("Hybrid Searches", perf['hybrid_searches'])
-        with col4:
+        # Performance details
+        with st.expander("⏱️ Performance", expanded=False):
+            perf = stats['performance']
             st.metric("Avg Time (ms)", f"{perf['avg_search_time']*1000:.1f}")
+            st.metric("Text Searches", perf['text_searches'])
+            st.metric("VLM Searches", perf['vlm_searches'])
+            st.metric("Hybrid Searches", perf['hybrid_searches'])
+    
+    # ==================== MAIN NAVIGATION ====================
+    
+    tab1, tab2, tab3 = st.tabs(["🔍 Search", "📚 Upload Documents", "📋 View Documents"])
+    
+    # ==================== SEARCH TAB ====================
+    
+    with tab1:
+        st.header("Search Documents")
+        
+        search_query = st.text_input(
+            "Enter search query:",
+            placeholder="e.g., machine learning, find similar documents...",
+            key="search_query"
+        )
+        
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
+            if st.button("🔍 Search", key="btn_search", use_container_width=True):
+                if search_query:
+                    with st.spinner("Searching..."):
+                        start_time = time.time()
+                        results = engine.search(search_query, search_mode=search_mode if search_mode != "auto" else None, top_k=top_k)
+                        search_time = time.time() - start_time
+                    
+                    st.success(f"✅ Found {len(results)} results in {search_time:.2f}s")
+                    if results:
+                        for i, result in enumerate(results, 1):
+                            display_result_card(result, search_mode or "hybrid", i)
+                            st.divider()
+                    else:
+                        st.info("No results found.")
+                else:
+                    st.warning("⚠️ Please enter a search query")
+        
+        with col2:
+            st.write("")
+            st.write("")
+            if st.button("🗑️ Clear", key="btn_clear", use_container_width=True):
+                if engine.clear_all():
+                    st.success("✅ All data cleared")
+                    st.rerun()
+        
+        with col3:
+            st.write("")
+            st.write("")
+            if st.button("💾 Save", key="btn_save", use_container_width=True):
+                if engine.save_state():
+                    st.success("✅ Saved")
+    
+    # ==================== UPLOAD TAB ====================
+    
+    with tab2:
+        st.header("Upload Documents")
+        
+        st.markdown("""
+        **Supported formats:**
+        - 📝 Text: `.txt`, `.md`
+        - 📄 Documents: `.docx`
+        - 🖼️ Images: `.png`, `.jpg`, `.jpeg`, `.bmp`, `.gif`, `.webp`
+        - 📑 PDFs: `.pdf`
+        """)
         
         st.divider()
         
-        # Configuration Summary
-        st.subheader("Active Configuration")
-        config_dict = engine.config.to_dict()
+        # File uploader
+        uploaded_files = st.file_uploader(
+            "Upload documents",
+            type=["txt", "md", "docx", "pdf", "png", "jpg", "jpeg", "bmp", "gif", "webp"],
+            accept_multiple_files=True,
+            help="Select one or more files to upload"
+        )
+        
+        if uploaded_files:
+            st.subheader("Files to Upload")
+            
+            files_to_upload = []
+            for uploaded_file in uploaded_files:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    doc_id = st.text_input(
+                        f"Document ID for {uploaded_file.name}:",
+                        value=Path(uploaded_file.name).stem,
+                        key=f"docid_{uploaded_file.name}"
+                    )
+                with col2:
+                    st.write("")  # Spacing
+                    file_type = Path(uploaded_file.name).suffix.lower()
+                    st.caption(f"Type: {file_type}")
+                
+                files_to_upload.append((uploaded_file, doc_id))
+            
+            if st.button("⬆️ Upload All", use_container_width=True):
+                with st.spinner("Uploading and indexing..."):
+                    success_count = 0
+                    for uploaded_file, doc_id in files_to_upload:
+                        if process_uploaded_file(uploaded_file, doc_id, engine):
+                            success_count += 1
+                            st.success(f"✅ {uploaded_file.name} uploaded as '{doc_id}'")
+                        else:
+                            st.error(f"❌ Failed to process {uploaded_file.name}")
+                    
+                    st.info(f"Successfully uploaded {success_count}/{len(files_to_upload)} files")
+    
+    # ==================== VIEW DOCUMENTS TAB ====================
+    
+    with tab3:
+        st.header("Indexed Documents")
         
         col1, col2 = st.columns(2)
+        
         with col1:
-            st.write("**Search Settings:**")
-            for key, value in config_dict.get('search', {}).items():
-                st.caption(f"• {key}: {value}")
+            st.subheader("📝 Text Documents")
+            text_docs = engine.document_store.list_documents()
+            
+            if text_docs:
+                st.write(f"**Total: {len(text_docs)}**")
+                with st.container(border=True):
+                    for doc_id in text_docs:
+                        col_a, col_b = st.columns([2, 1])
+                        with col_a:
+                            st.write(f"• `{doc_id}`")
+                        with col_b:
+                            if st.button("🗑️", key=f"del_text_{doc_id}", help="Delete"):
+                                engine.document_store.remove_document(doc_id)
+                                st.rerun()
+            else:
+                st.info("No text documents")
         
         with col2:
-            st.write("**VLM Settings:**")
-            for key, value in config_dict.get('vlm', {}).items():
-                st.caption(f"• {key}: {value}")
+            st.subheader("🖼️ Visual Documents")
+            visual_docs = engine.image_store.list_documents()
+            
+            if visual_docs:
+                st.write(f"**Total: {len(visual_docs)}**")
+                with st.container(border=True):
+                    for doc_id in visual_docs:
+                        col_a, col_b = st.columns([2, 1])
+                        with col_a:
+                            info = engine.image_store.get_document_info(doc_id)
+                            filename = Path(info['path']).name if info else "Unknown"
+                            st.write(f"• `{doc_id}` ({filename})")
+                        with col_b:
+                            if st.button("🗑️", key=f"del_visual_{doc_id}", help="Delete"):
+                                engine.image_store.remove_documents([doc_id])
+                                st.rerun()
+            else:
+                st.info("No visual documents")
 
 # ==================== RUN APP ====================
 
